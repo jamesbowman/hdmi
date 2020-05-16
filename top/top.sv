@@ -10,9 +10,9 @@ logic clk_audio;
 
 pll pll(.c0(clk_pixel_x10), .c1(clk_pixel), .c2(clk_audio));
 
-logic [15:0] audio_sample_word [1:0] = '{16'sd0, 16'sd0};
-always @(posedge clk_audio)
-  audio_sample_word <= '{audio_sample_word[0] + 16'sd1, audio_sample_word[1] - 16'sd1};
+logic signed [15:0] audio_sample_word = 16'sd0; // Since the L-PCM audio is 2-channel by default, this is mono audio.
+always @(posedge clk_audio) // Sawtooth wave generator
+  audio_sample_word <= audio_sample_word + 16'sd638;
 
 logic [23:0] rgb = 24'd0;
 logic [9:0] cx, cy, screen_start_x, screen_start_y, frame_width, frame_height, screen_width, screen_height;
