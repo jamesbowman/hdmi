@@ -146,12 +146,7 @@ begin
     end
     else if (packet_enable)
     begin
-        if (last_clk_audio_counter_wrap ^ clk_audio_counter_wrap)
-        begin
-            packet_type <= 8'd1;
-            last_clk_audio_counter_wrap <= clk_audio_counter_wrap;
-        end
-        else if (sample_buffer_ready)
+        if (sample_buffer_ready)
         begin
             packet_type <= 8'd2;
             audio_sample_word_packet <= audio_sample_word_buffer[!sample_buffer_current];
@@ -172,6 +167,11 @@ begin
         begin
             packet_type <= 8'h83;
             source_product_description_info_frame_sent <= 1'b1;
+        end
+        else
+        begin
+            packet_type <= 8'd1;
+            last_clk_audio_counter_wrap <= clk_audio_counter_wrap;
         end
         else
             packet_type <= 8'd0;
