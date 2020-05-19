@@ -173,8 +173,6 @@ begin
             packet_type <= 8'd1;
             last_clk_audio_counter_wrap <= clk_audio_counter_wrap;
         end
-        else
-            packet_type <= 8'd0;
     end
 end
 
