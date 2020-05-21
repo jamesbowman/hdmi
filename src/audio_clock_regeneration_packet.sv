@@ -10,7 +10,7 @@ module audio_clock_regeneration_packet
 (
     input logic clk_pixel,
     input logic clk_audio,
-    output logic clk_audio_counter_wrap = 0,
+    output logic clk_audio_counter_wrap,
     output logic [23:0] header,
     output logic [55:0] sub [3:0]
 );
@@ -18,13 +18,24 @@ module audio_clock_regeneration_packet
 // See Section 7.2.3, values derived from "Other" row in Tables 7-1, 7-2, 7-3.
 localparam bit [19:0] N = AUDIO_RATE % 125 == 0 ? 20'(16 * AUDIO_RATE / 125) : AUDIO_RATE % 225 == 0 ? 20'(196 * AUDIO_RATE / 225) : 20'(AUDIO_RATE * 16 / 125);
 
-logic prev_clk_audio = 1'b0;
-always_ff @(posedge clk_pixel)
-    prev_clk_audio <= clk_audio;
-
 localparam int CLK_AUDIO_COUNTER_WIDTH = $clog2(N / 128);
 localparam bit [CLK_AUDIO_COUNTER_WIDTH-1:0] CLK_AUDIO_COUNTER_END = CLK_AUDIO_COUNTER_WIDTH'(N / 128 - 1);
 logic [CLK_AUDIO_COUNTER_WIDTH-1:0] clk_audio_counter = CLK_AUDIO_COUNTER_WIDTH'(0);
+logic internal_clk_audio_counter_wrap = 1'd0;
+always_ff @(posedge clk_audio)
+begin
+    if (clk_audio_counter == CLK_AUDIO_COUNTER_END)
+    begin
+        clk_audio_counter <= CLK_AUDIO_COUNTER_WIDTH'(0);
+        internal_clk_audio_counter_wrap <= !internal_clk_audio_counter_wrap;
+    end
+    else
+        clk_audio_counter <= clk_audio_counter + 1'd1;
+end
+
+logic [1:0] clk_audio_counter_wrap_synchronizer_chain = 2'd0;
+always_ff @(posedge clk_pixel)
+    clk_audio_counter_wrap_synchronizer_chain <= {internal_clk_audio_counter_wrap, clk_audio_counter_wrap_synchronizer_chain[1]};
 
 localparam bit [19:0] CYCLE_TIME_STAMP_COUNTER_IDEAL = 20'(int'(VIDEO_RATE * int'(N) / 128 / AUDIO_RATE));
 localparam int CYCLE_TIME_STAMP_COUNTER_WIDTH = $clog2(20'(int'(real'(CYCLE_TIME_STAMP_COUNTER_IDEAL) * 1.1))); // Account for 10% deviation in audio clock
@@ -33,20 +44,11 @@ logic [19:0] cycle_time_stamp = 20'd0;
 logic [CYCLE_TIME_STAMP_COUNTER_WIDTH-1:0] cycle_time_stamp_counter = CYCLE_TIME_STAMP_COUNTER_WIDTH'(0);
 always_ff @(posedge clk_pixel)
 begin
-    if (!prev_clk_audio && clk_audio)
+    if (clk_audio_counter_wrap_synchronizer_chain[1] ^ clk_audio_counter_wrap_synchronizer_chain[0])
     begin
-        if (clk_audio_counter == CLK_AUDIO_COUNTER_END)
-        begin
-            cycle_time_stamp_counter <= CYCLE_TIME_STAMP_COUNTER_WIDTH'(0);
-            cycle_time_stamp <= {(20-CYCLE_TIME_STAMP_COUNTER_WIDTH)'(0), cycle_time_stamp_counter + 1};
-            clk_audio_counter <= CLK_AUDIO_COUNTER_WIDTH'(0);
-            clk_audio_counter_wrap <= !clk_audio_counter_wrap;
-        end
-        else
-        begin
-            clk_audio_counter <= clk_audio_counter + 1'd1;
-            cycle_time_stamp_counter <= cycle_time_stamp_counter + CYCLE_TIME_STAMP_COUNTER_WIDTH'(1);
-        end
+        cycle_time_stamp_counter <= CYCLE_TIME_STAMP_COUNTER_WIDTH'(0);
+        cycle_time_stamp <= {(20-CYCLE_TIME_STAMP_COUNTER_WIDTH)'(0), cycle_time_stamp_counter};
+        clk_audio_counter_wrap <= !clk_audio_counter_wrap;
     end
     else
         cycle_time_stamp_counter <= cycle_time_stamp_counter + CYCLE_TIME_STAMP_COUNTER_WIDTH'(1);
