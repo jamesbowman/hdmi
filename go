@@ -1,7 +1,7 @@
 set -e
 
 tput clear
-make
+make -f verilator.Makefile
 obj_dir/Vtestbench
 time python tv.py log
 qiv out.png
