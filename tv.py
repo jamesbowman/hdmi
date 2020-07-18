@@ -1,10 +1,11 @@
 from PIL import Image
 import numpy as np
 import sys
+import struct
 
-def ecc24(v):
+def ecc(v, n):
     lfsr = 0
-    for i in range(24):
+    for i in range(n):
         f = (v ^ lfsr) & 1
         lfsr >>= 1
         v >>= 1
@@ -75,15 +76,37 @@ class Decoder:
         self.window = ''
         self.in_data_island = False
         self.in_video_data = False
-        self.bch4 = 0
+        self.bch2 = 0
+        self.bch3 = 0
+        self.bch = [0,0,0,0]
         self.count = 0
+        self.regen_clock = set()
 
-        self.hs = []
-        self.vs = []
-
-        self.images = []
         self.rgb = []
     
+    def handle_island(self):
+        # Section 5.3.1
+        hb0 = self.bch2 & 0xff
+        hb1 = (self.bch2 >> 8) & 0xff
+        hb2 = (self.bch2 >> 16) & 0xff
+
+        assert all([ecc(x, 56) == (x >> 56) for x in self.bch])
+
+        sb = [struct.pack("Q", b)[:7] for b in self.bch]
+
+        if hb0 == 0x00:
+            return
+        if hb0 == 0x01:
+            assert len(set(self.bch)) == 1
+            # print("SB0-6:", ",".join(['%02x'%b for b in sb]))
+            (CTS,) = struct.unpack(">I", sb[0][0:4])
+            (N,)   = struct.unpack(">I", b'\x00' + sb[0][4:])
+            print('N', N, 'CTS', CTS, 74.25e6 * N / CTS)
+            self.regen_clock.add((74.25e6 * N / CTS) / 128)
+        if hb0 == 0x02:
+            print(hb1, hb2)
+            print("SB0-6:", ",".join(['%02x'%b for b in sb[0]]))
+
     def datum(self, ch):
         assert len(ch) == 3
         assert all([0 <= x < 1024 for x in ch])
@@ -125,18 +148,26 @@ class Decoder:
             self.in_video_data = False
         elif self.in_data_island:
             terc = [terc4_codes.index(x) for x in ch]
+            d = 'TERC %s %s %s' % tuple([bin10(x, 4) for x in terc])
+
             hsync = terc[0] & 1
             vsync = (terc[0] >> 1) & 1
-            d = 'TERC %s %s %s' % tuple([bin10(x, 4) for x in terc])
-            # self.bch4 = (self.bch4 << 1) | ((terc[0] >> 2) & 1)
-            h4 = ((terc[0] >> 2) & 1)
-            self.bch4 |= h4 << self.count
+            h2    = ((terc[0] >> 2) & 1)
+            h3    = ((terc[0] >> 3) & 1)
+            self.bch2 |= h2 << self.count
+            self.bch3 |= h3 << self.count
+            for d in range(4):
+                self.bch[d] |= ((terc[1] >> d) & 1) << (2 * self.count)
+                self.bch[d] |= ((terc[2] >> d) & 1) << (2 * self.count + 1)
             self.count += 1
             if self.count == 32:
-                print('BCH4', hex(self.bch4), ecc24(self.bch4 & 0xffffff) == (self.bch4 >> 24))
-                self.bch4 = 0
+                # print('BCH2', hex(self.bch2), hex(self.bch3)) # ecc24(self.bch2 & 0xffffff) == (self.bch2 >> 24))
+                self.handle_island()
+                self.bch2 = 0
+                self.bch3 = 0
+                self.bch = [0,0,0,0]
                 self.count = 0
-            rgb = (32 + 32 * h4, ) * 3
+            rgb = (32 + 32 * h2, ) * 3
             # d = 'TERC %d' % ((terc[0] >> 3) & 1)
         elif self.in_video_data:
             (r,g,b) = [tmds_table[x] for x in ch]
@@ -147,15 +178,13 @@ class Decoder:
         d = '%-24s [ VSYNC %d HSYNC %d]' % (d, vsync, hsync)
         self.window = self.window[-10:]
         if self.window == 'DDDDDDDDdd':
+            print("----")
             self.in_data_island = True
             self.window = ''
         if self.window == 'dd':
             self.in_data_island = False
         if self.window.endswith('vv'):
             self.in_video_data = True
-
-        self.hs.append(hsync)
-        self.vs.append(vsync)
 
         (r, g, b) = rgb
         # r = min(255, r + 60 * vsync)
@@ -180,3 +209,4 @@ if __name__ == "__main__":
         # print("%5d: %s" % (i, d.datum(ch)))
         d.datum(ch)
     d.im().save("out.png")
+    print(d.regen_clock)

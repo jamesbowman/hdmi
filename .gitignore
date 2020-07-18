@@ -38,3 +38,4 @@ modelsim.ini
 transcript
 work/
 *.wlf
+obj_dir/
