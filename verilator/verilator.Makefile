@@ -10,14 +10,14 @@ src/packet_picker.sv \
 src/source_product_description_info_frame.sv \
 src/tmds_channel.sv
 
-VERILOGS+=testbench.sv
+VERILOGS += verilator/testbench.sv
 
-VERILATOR=$(HOME)/local/bin/verilator
+VERILATOR=verilator
 CCO=-fno-var-tracking-assignments
 SPEED='OPT_FAST="-O2"'
 CPUS=2
 
 all:
         # -Wall
-	$(VERILATOR) -DVERILATOR=1 -Wno-fatal --cc --trace $(VERILOGS) --top-module testbench --l2-name v --exe sim_main.cpp
+	$(VERILATOR) -DVERILATOR=1 -Wno-fatal --cc --trace $(VERILOGS) --top-module testbench --l2-name v --exe verilator/sim_main.cpp
 	$(MAKE) -C obj_dir OPT_FAST="-O2" -f Vtestbench.mk Vtestbench

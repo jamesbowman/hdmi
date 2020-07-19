@@ -1,7 +1,9 @@
 set -e
 
+PATH=$HOME/local/bin:$PATH
 tput clear
-make -f verilator.Makefile
+make -f verilator/verilator.Makefile
+exit
 obj_dir/Vtestbench
 time python tv.py log
 qiv out.png
