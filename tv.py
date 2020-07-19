@@ -3,6 +3,8 @@ import numpy as np
 import sys
 import struct
 
+B0 = b'\x00'
+
 def ecc(v, n):
     lfsr = 0
     for i in range(n):
@@ -12,6 +14,13 @@ def ecc(v, n):
         if f:
             lfsr ^= 0b10000011
     return lfsr
+
+def parity(x):
+    p = 0
+    while x:
+        p ^= (x & 1)
+        x >>= 1
+    return p
 
 terc4_codes = [
 0b1010011100,
@@ -83,7 +92,25 @@ class Decoder:
         self.regen_clock = set()
 
         self.rgb = []
-    
+
+        self.afc = 0        # aligned frame counter
+        self.channel_status = [0, 0]
+
+    def audio_frame(self, bb):
+        (l24,) = struct.unpack("<I", bb[:3] + B0)
+        (r24,) = struct.unpack("<I", bb[3:6] + B0)
+        for (lr, sample) in enumerate((l24, r24)):
+            pcuv = 0xf & (bb[6] >> (4 * lr))
+            p = parity(pcuv) ^ parity(sample)
+            assert p == 0
+            assert (pcuv & 3) == 0, "User and Valid bits should be zero"
+            c = 1 & (pcuv >> 2)
+            self.channel_status[lr] |= (c << self.afc)
+        self.afc += 1
+        if self.afc == 192:
+            # 60958-3 page 5
+            print("%048x %048x" % tuple(self.channel_status))
+
     def handle_island(self):
         # Section 5.3.1
         hb0 = self.bch2 & 0xff
@@ -96,16 +123,22 @@ class Decoder:
 
         if hb0 == 0x00:
             return
-        if hb0 == 0x01:
+        elif hb0 == 0x01:
             assert len(set(self.bch)) == 1
             # print("SB0-6:", ",".join(['%02x'%b for b in sb]))
             (CTS,) = struct.unpack(">I", sb[0][0:4])
             (N,)   = struct.unpack(">I", b'\x00' + sb[0][4:])
-            print('N', N, 'CTS', CTS, 74.25e6 * N / CTS)
+            # print('N', N, 'CTS', CTS, 74.25e6 * N / CTS)
             self.regen_clock.add((74.25e6 * N / CTS) / 128)
-        if hb0 == 0x02:
-            print(hb1, hb2)
-            print("SB0-6:", ",".join(['%02x'%b for b in sb[0]]))
+        elif hb0 == 0x02:
+            for d in range(4):
+                if hb1 & (1 << d):
+                    if (hb2 >> 4) & (1 << d):
+                        self.afc = 0
+                        self.channel_status = [0, 0]
+                    self.audio_frame(sb[d])
+        else:
+            print("Unhandled packet code %02x" % hb0)
 
     def datum(self, ch):
         assert len(ch) == 3
@@ -178,7 +211,7 @@ class Decoder:
         d = '%-24s [ VSYNC %d HSYNC %d]' % (d, vsync, hsync)
         self.window = self.window[-10:]
         if self.window == 'DDDDDDDDdd':
-            print("----")
+            # print("----")
             self.in_data_island = True
             self.window = ''
         if self.window == 'dd':
