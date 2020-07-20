@@ -22,7 +22,7 @@ def parity(x):
         x >>= 1
     return p
 
-terc4_codes = [
+terc4_codes = {v:i for (i, v) in enumerate([
 0b1010011100,
 0b1001100011,
 0b1011100100,
@@ -39,7 +39,7 @@ terc4_codes = [
 0b1001110001,
 0b0101100011,
 0b1011000011
-]
+])}
 
 control_codes = [
 0b1101010100,
@@ -109,6 +109,8 @@ class Decoder:
 
         self.clock = 0
 
+        self.verbose = False
+
     def confirm(self, p, desc):
         if not p:
             print("FATAL ERROR at clock %d:" % self.clock, desc)
@@ -162,22 +164,25 @@ class Decoder:
             print("Unhandled packet code %02x" % hb0)
 
     def datum(self, ch):
-        assert len(ch) == 3
-        assert all([0 <= x < 1024 for x in ch])
+        if self.verbose:
+            assert len(ch) == 3
+            assert all([0 <= x < 1024 for x in ch])
+            d = 'xxx' # 'xxx %s' % bin10(ch[0])
         # sys.stdout.write(str(cn) + " " + bin(x)[2:].rjust(10, '0') + " ")
         sx = set(ch)
 
         (hsync, vsync) = (0, 0)
-        d = 'xxx' # 'xxx %s' % bin10(ch[0])
         rgb = (0, 0, 0)
 
         if ch == video_guards:
-            d = 'VIDEO GUARD'
+            if self.verbose:
+                d = 'VIDEO GUARD'
             self.window += 'v'
             (hsync, vsync) = (0, 0)
             rgb = (0, 128, 0)
         elif ch[0] in data_guards_0 and ch[1:] == data_guards[1:]:
-            d = 'DATA GUARD'
+            if self.verbose:
+                d = 'DATA GUARD'
             vh = data_guards_0.index(ch[0])
             hsync = vh & 1
             vsync = (vh >> 1) & 1
@@ -190,19 +195,25 @@ class Decoder:
             vsync = (ctl6 >> 1) & 1
             ctl = ctl6 >> 2
 
-            d = 'CONTROL ' + bin10(ctl, 4)
+            if self.verbose:
+                d = 'CONTROL ' + bin10(ctl, 4)
             if ctl == 0b0001:
-                d = 'VIDEO preamble'
+                if self.verbose:
+                    d = 'VIDEO preamble'
                 self.window += 'V'
                 rgb = (64, 64, 0)
-            if ctl == 0b0101:
-                d = 'DATA preamble'
+            elif ctl == 0b0101:
+                if self.verbose:
+                    d = 'DATA preamble'
                 self.window += 'D'
                 rgb = (0, 64, 64)
+            else:
+                self.window = ''
             self.in_video_data = False
         elif self.in_data_island:
-            terc = [terc4_codes.index(x) for x in ch]
-            d = 'TERC %s %s %s' % tuple([bin10(x, 4) for x in terc])
+            terc = [terc4_codes[x] for x in ch]
+            if self.verbose:
+                d = 'TERC %s %s %s' % tuple([bin10(x, 4) for x in terc])
 
             hsync = terc[0] & 1
             vsync = (terc[0] >> 1) & 1
@@ -222,22 +233,25 @@ class Decoder:
                 self.bch = [0,0,0,0]
                 self.count = 0
             rgb = (32 + 32 * h2, ) * 3
-            # d = 'TERC %d' % ((terc[0] >> 3) & 1)
         elif self.in_video_data:
             (r,g,b) = [tmds_table[x] for x in ch]
-            d = 'video (%02x, %02x, %02x)' % (r, g, b)
+            if self.verbose:
+                d = 'video (%02x, %02x, %02x)' % (r, g, b)
             # rgb = tuple([0xc0 + c // 64 for c in (r, g, b)])
             rgb = (r, g, b)
             (hsync, vsync) = (0, 0)
-        d = '%-24s [ VSYNC %d HSYNC %d]' % (d, vsync, hsync)
-        self.window = self.window[-10:]
+            self.window = ''
+
+        if self.verbose:
+            d = '%-24s [ VSYNC %d HSYNC %d]' % (d, vsync, hsync)
+
         if self.window == 'DDDDDDDDdd':
             # print("----")
             self.in_data_island = True
             self.window = ''
-        if self.window == 'dd':
+        elif self.window == 'dd':
             self.in_data_island = False
-        if self.window.endswith('vv'):
+        elif self.window == 'VVVVVVVVvv':
             self.in_video_data = True
 
         (r, g, b) = rgb
@@ -247,7 +261,8 @@ class Decoder:
 
         self.clock += 1
 
-        return d
+        if self.verbose:
+            return d
 
     def im(self):
         (w, h) = (800, 525)
@@ -260,9 +275,9 @@ class Decoder:
         pass
 
 if __name__ == "__main__":
-    vv = [int(l, 16) for l in open(sys.argv[1])][:]
     d = Decoder()
-    for i,v in enumerate(vv):
+    for l in open(sys.argv[1]):
+        v = int(l, 16)
         ch = [v & 0x3ff, (v >> 10) & 0x3ff, (v >> 20) & 0x3ff]
         # print()
         # sys.stdout.write("%6d: " % i)
