@@ -161,7 +161,7 @@ class Decoder:
                         self.channel_status = [0, 0]
                     self.audio_frame(sb[d])
         else:
-            print("Unhandled packet code %02x" % hb0)
+            print(self.clock, "Unhandled packet code %02x" % hb0)
 
     def datum(self, ch):
         if self.verbose:
@@ -226,7 +226,7 @@ class Decoder:
                 self.bch[d] |= ((terc[2] >> d) & 1) << (2 * self.count + 1)
             self.count += 1
             if self.count == 32:
-                # print('BCH2', hex(self.bch2), hex(self.bch3)) # ecc24(self.bch2 & 0xffffff) == (self.bch2 >> 24))
+                self.confirm(ecc(self.bch2, 24) == (self.bch2 >> 24), "Header ECC code mismatmach")
                 self.handle_island()
                 self.bch2 = 0
                 self.bch3 = 0
@@ -250,6 +250,7 @@ class Decoder:
             self.in_data_island = True
             self.window = ''
         elif self.window == 'dd':
+            self.confirm(self.count == 0, "Incomplete packet in data island %d" % self.count)
             self.in_data_island = False
         elif self.window == 'VVVVVVVVvv':
             self.in_video_data = True
