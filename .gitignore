@@ -39,3 +39,4 @@ transcript
 work/
 *.wlf
 obj_dir/
+__pycache__/
