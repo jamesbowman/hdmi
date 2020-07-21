@@ -161,7 +161,8 @@ class Decoder:
                         self.channel_status = [0, 0]
                     self.audio_frame(sb[d])
         else:
-            print(self.clock, "Unhandled packet code %02x" % hb0)
+            d = ",".join(['%02x'%b for b in b''.join(sb)])
+            print(self.clock, "Unhandled packet code %02x: %s" % (hb0, d))
 
     def datum(self, ch):
         if self.verbose:
@@ -286,3 +287,4 @@ if __name__ == "__main__":
         d.datum(ch)
     d.im().save("out.png")
     d.check_expected()
+    print(ecc(0xffffff, 24))
