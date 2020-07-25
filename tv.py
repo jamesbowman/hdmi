@@ -4,6 +4,7 @@ import sys
 import struct
 
 B0 = b'\x00'
+CHECK_FRAMING = 0
 
 def ecc(v, n):
     lfsr = 0
@@ -111,6 +112,11 @@ class Decoder:
 
         self.verbose = False
 
+        self.fTMDS_CLOCK = 74.25e6
+        self.fS = 48000
+
+        self.t_audio = []
+
     def confirm(self, p, desc):
         if not p:
             print("FATAL ERROR at clock %d:" % self.clock, desc)
@@ -120,6 +126,7 @@ class Decoder:
         (l24,) = struct.unpack("<I", bb[:3] + B0)
         (r24,) = struct.unpack("<I", bb[3:6] + B0)
         expected = next(self.audio_gen)
+        self.t_audio.append(self.clock)
         self.confirm(expected == (r24, l24), "Audio sample mismatch")
         for (lr, sample) in enumerate((l24, r24)):
             pcuv = 0xf & (bb[6] >> (4 * lr))
@@ -132,7 +139,8 @@ class Decoder:
         self.afc += 1
         if self.afc == 192:
             # 60958-3 page 5
-            print("%048x %048x" % tuple(self.channel_status))
+            # print("%048x %048x" % tuple(self.channel_status))
+            self.confirm(self.channel_status == [0x202100004, 0x202200004], "Channel status mismatch")
 
     def handle_island(self):
         # Section 5.3.1
@@ -143,15 +151,19 @@ class Decoder:
         assert all([ecc(x, 56) == (x >> 56) for x in self.bch])
 
         sb = [struct.pack("Q", b)[:7] for b in self.bch]
+        sbb = b''.join(sb)
 
         if hb0 == 0x00:
             return
         elif hb0 == 0x01:
-            assert len(set(self.bch)) == 1
+            self.confirm(len(set(self.bch)) == 1, "Audio regen packet must all be the same")
+
             # print("SB0-6:", ",".join(['%02x'%b for b in sb]))
-            (CTS,) = struct.unpack(">I", sb[0][0:4])
-            (N,)   = struct.unpack(">I", b'\x00' + sb[0][4:])
+            (CTS,) = struct.unpack(">I", sbb[0:4])
+            (N,)   = struct.unpack(">I", b'\x00' + sbb[4:7])
             print('N', N, 'CTS', CTS, 74.25e6 * N / CTS)
+            ratio = (128 * self.fS) / (self.fTMDS_CLOCK * N / CTS)
+            self.confirm(.999 < ratio < 1.001, "Regen clock error")
             self.regen_clock.add((74.25e6 * N / CTS) / 128)
         elif hb0 == 0x02:
             for d in range(4):
@@ -160,9 +172,13 @@ class Decoder:
                         self.afc = 0
                         self.channel_status = [0, 0]
                     self.audio_frame(sb[d])
+        elif hb0 == 0x82:
+            self.confirm((hb0, hb1, hb2) == (0x82,0x02,0x0d), "AVI infoframe header error")
+            self.confirm(sbb == bytes([0x63,0,0x08,0,0x04,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]),
+                         "AVI infoframe packet error")
         else:
-            d = ",".join(['%02x'%b for b in b''.join(sb)])
-            print(self.clock, "Unhandled packet code %02x: %s" % (hb0, d))
+            d = ",".join(['%02x'%b for b in sbb])
+            print(self.clock, "Unhandled packet code %02x %02x %02x: %s" % (hb0, hb1, hb2, d))
 
     def datum(self, ch):
         if self.verbose:
@@ -227,12 +243,18 @@ class Decoder:
                 self.bch[d] |= ((terc[2] >> d) & 1) << (2 * self.count + 1)
             self.count += 1
             if self.count == 32:
-                self.confirm(ecc(self.bch2, 24) == (self.bch2 >> 24), "Header ECC code mismatmach")
+                if CHECK_FRAMING:
+                    if self.slot == 0:
+                        self.confirm(self.bch3 == 0xfffffffe, "Channel 0 missing frame start")
+                    else:
+                        self.confirm(self.bch3 == 0xffffffff, "Channel 0 incorrect frame start")
+                self.confirm(ecc(self.bch2, 24) == (self.bch2 >> 24), "Header ECC code mismatch")
                 self.handle_island()
                 self.bch2 = 0
                 self.bch3 = 0
                 self.bch = [0,0,0,0]
                 self.count = 0
+                self.slot += 1
             rgb = (32 + 32 * h2, ) * 3
         elif self.in_video_data:
             (r,g,b) = [tmds_table[x] for x in ch]
@@ -249,6 +271,7 @@ class Decoder:
         if self.window == 'DDDDDDDDdd':
             # print("----")
             self.in_data_island = True
+            (self.count, self.slot) = (0, 0)
             self.window = ''
         elif self.window == 'dd':
             self.confirm(self.count == 0, "Incomplete packet in data island %d" % self.count)
@@ -274,7 +297,8 @@ class Decoder:
         return Image.fromarray(rgb, "RGB")
 
     def check_expected(self):
-        pass
+        ai = [(b - a) for (a, b) in zip(self.t_audio, self.t_audio[1:])]
+        print('mean clocks between audio samples:', sum(ai) / len(ai))
 
 if __name__ == "__main__":
     d = Decoder()
